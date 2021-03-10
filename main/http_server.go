@@ -44,9 +44,9 @@ type HTTPMessage struct {
 }
 
 type HTTPResponse struct {
-	Code    int
-	Headers map[string][]string
-	Content []byte
+	StatusCode int         `json:"statusCode"`
+	Headers    http.Header `json:"headers"`
+	Content    []byte      `json:"content"`
 }
 
 // wrapper for http.Error that additionally logs the error message to std.Output
@@ -158,7 +158,7 @@ func forwardBackendResponse(w http.ResponseWriter, respChan chan HTTPResponse) {
 	for k, v := range resp.Headers {
 		w.Header().Set(k, v[0])
 	}
-	w.WriteHeader(resp.Code)
+	w.WriteHeader(resp.StatusCode)
 	_, err := w.Write(resp.Content)
 	if err != nil {
 		log.Errorf("unable to write response: %s", err)
@@ -225,7 +225,7 @@ func (endpnt *ServerEndpoint) handleRequestOriginalData(w http.ResponseWriter, r
 	endpnt.handleRequest(w, r, false)
 }
 
-func (endpnt *ServerEndpoint) handleOptions(writer http.ResponseWriter, request *http.Request) {
+func (endpnt *ServerEndpoint) handleOptions(w http.ResponseWriter, r *http.Request) {
 	return
 }
 
@@ -299,16 +299,4 @@ func (srv *HTTPServer) Serve(ctx context.Context) error {
 		return fmt.Errorf("error starting HTTP service: %v", err)
 	}
 	return nil
-}
-
-func HTTPErrorResponse(code int, message string) HTTPResponse {
-	if message == "" {
-		message = http.StatusText(code)
-	}
-	log.Error(message)
-	return HTTPResponse{
-		Code:    code,
-		Headers: map[string][]string{"Content-Type": {"text/plain; charset=utf-8"}},
-		Content: []byte(message),
-	}
 }

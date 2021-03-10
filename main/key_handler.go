@@ -22,6 +22,27 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+func setPublicKey(p *ExtendedProtocol, name string, id string, pubKey_64 string) error {
+	log.Debugf("setting verification key \"%s\": %s", name, pubKey_64)
+
+	uid, err := uuid.Parse(id)
+	if err != nil {
+		return fmt.Errorf("invalid UUID for verification key \"%s\": %v", name, err)
+	}
+
+	pkey, err := base64.StdEncoding.DecodeString(pubKey_64)
+	if err != nil {
+		return fmt.Errorf("decoding verification key \"%s\" failed: %v", name, err)
+	}
+
+	err = p.SetPublicKey(name, uid, pkey)
+	if err != nil {
+		return fmt.Errorf("setting verification key \"%s\" failed: %v", name, err)
+	}
+
+	return p.PersistContext()
+}
+
 func registerPublicKey(p *ExtendedProtocol, uid uuid.UUID, pubKey []byte, keyService string, auth string) error {
 	log.Printf("%s: registering public key at key service: %s", uid.String(), keyService)
 
@@ -31,7 +52,7 @@ func registerPublicKey(p *ExtendedProtocol, uid uuid.UUID, pubKey []byte, keySer
 	}
 	log.Debugf("%s: certificate: %s", uid.String(), cert)
 
-	code, resp, _, err := post(keyService, cert, map[string]string{
+	resp, err := post(keyService, cert, map[string]string{
 		"content-type":         "application/json",
 		"x-ubirch-hardware-id": uid.String(),
 		"x-ubirch-auth-type":   "ubirch",
@@ -40,12 +61,10 @@ func registerPublicKey(p *ExtendedProtocol, uid uuid.UUID, pubKey []byte, keySer
 	if err != nil {
 		return fmt.Errorf("error sending key registration: %v", err)
 	}
-	if httpFailed(code) {
-		return fmt.Errorf("request to %s failed: (%d) %s", keyService, code, string(resp))
+	if httpFailed(resp.StatusCode) {
+		return fmt.Errorf("request to %s failed: (%d) %q", keyService, resp.StatusCode, resp.Content)
 	}
-
-	log.Debugf("%s: key registration successful: (%d) %s", uid.String(), code, string(resp))
-
+	log.Debugf("%s: key registration successful: (%d) %s", uid.String(), resp.StatusCode, string(resp.Content))
 	return nil
 }
 
@@ -59,16 +78,14 @@ func submitCSR(p *ExtendedProtocol, uid uuid.UUID, subjectCountry string, subjec
 	}
 	log.Debugf("%s: CSR [der]: %s", uid.String(), hex.EncodeToString(csr))
 
-	code, resp, _, err := post(identityService, csr, map[string]string{"Content-Type": "application/octet-stream"})
+	resp, err := post(identityService, csr, map[string]string{"Content-Type": "application/octet-stream"})
 	if err != nil {
 		return fmt.Errorf("error sending CSR: %v", err)
 	}
-	if httpFailed(code) {
-		return fmt.Errorf("request to %s failed: (%d) %s", identityService, code, string(resp))
+	if httpFailed(resp.StatusCode) {
+		return fmt.Errorf("request to %s failed: (%d) %q", identityService, resp.StatusCode, resp.Content)
 	}
-
-	log.Debugf("%s: CSR submitted: (%d) %s", uid.String(), code, string(resp))
-
+	log.Debugf("%s: CSR submitted: (%d) %s", uid.String(), resp.StatusCode, string(resp.Content))
 	return nil
 }
 

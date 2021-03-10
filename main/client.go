@@ -80,12 +80,12 @@ func getSignedCertificate(p *ExtendedProtocol, uid uuid.UUID, pubKey []byte) ([]
 
 // post submits a message to a backend service
 // returns the response status code, body and headers and encountered errors
-func post(url string, data []byte, headers map[string]string) (int, []byte, http.Header, error) {
-	client := &http.Client{}
+func post(url string, data []byte, headers map[string]string) (HTTPResponse, error) {
+	client := &http.Client{Timeout: 60 * time.Second}
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
 	if err != nil {
-		return 0, nil, nil, fmt.Errorf("can't make new post request: %v", err)
+		return HTTPResponse{}, fmt.Errorf("can't make new post request: %v", err)
 	}
 
 	for k, v := range headers {
@@ -94,14 +94,18 @@ func post(url string, data []byte, headers map[string]string) (int, []byte, http
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, nil, nil, err
+		return HTTPResponse{}, err
 	}
 
 	//noinspection GoUnhandledErrorResult
 	defer resp.Body.Close()
 
 	respBodyBytes, err := ioutil.ReadAll(resp.Body)
-	return resp.StatusCode, respBodyBytes, resp.Header, err
+	return HTTPResponse{
+		StatusCode: resp.StatusCode,
+		Headers:    resp.Header,
+		Content:    respBodyBytes,
+	}, err
 }
 
 // requestPublicKeys requests a devices public keys at the identity service
@@ -155,5 +159,9 @@ func isKeyRegistered(keyService string, id uuid.UUID, pubKey []byte) (bool, erro
 }
 
 func httpFailed(StatusCode int) bool {
-	return !(StatusCode >= 200 && StatusCode < 300)
+	return !httpSuccess(StatusCode)
+}
+
+func httpSuccess(StatusCode int) bool {
+	return StatusCode >= 200 && StatusCode < 300
 }
