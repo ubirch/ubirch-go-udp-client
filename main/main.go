@@ -24,6 +24,8 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	log "github.com/sirupsen/logrus"
+
+	"time"
 )
 
 // handle graceful shutdown
@@ -101,11 +103,16 @@ func main() {
 	// set up graceful shutdown handling
 	go shutdown(cancel)
 
+	// setup time tracking
+	elapsedTime := make(chan time.Duration)
+	timeTrackCtx, timeTrackCancel := context.WithCancel(context.Background())
+	go timeTrack(elapsedTime, timeTrackCancel)
+
 	// set up synchronous chaining routine
 	chainingJobs := make(chan HTTPRequest, conf.RequestBufSize)
 
 	g.Go(func() error {
-		return s.chainer(chainingJobs)
+		return s.chainer(chainingJobs, elapsedTime)
 	})
 
 	// set up HTTP server
@@ -160,8 +167,35 @@ func main() {
 
 	log.Info("shutting down client")
 
+	// wait for time tracking to finish
+	<-timeTrackCtx.Done()
+
 	// wrap up
 	if err = p.Deinit(); err != nil {
 		log.Error(err)
+	}
+}
+
+func timeTrack(elapsed <-chan time.Duration, cancel context.CancelFunc) {
+	defer cancel()
+
+	var (
+		maxDur       time.Duration
+		timeSum      time.Duration
+		totalTracked int64
+	)
+
+	for dur := range elapsed {
+		timeSum += dur
+		totalTracked++
+		if dur > maxDur {
+			maxDur = dur
+		}
+	}
+
+	if totalTracked > 0 {
+		avgDur := timeSum.Milliseconds() / totalTracked
+		log.Infof(" >>> average duration of [ %4d ] requests: %4d ms", totalTracked, avgDur)
+		log.Infof(" >>>                 absolute max duration: %4d ms", maxDur.Milliseconds())
 	}
 }

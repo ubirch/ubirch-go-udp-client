@@ -25,6 +25,8 @@ import (
 	"github.com/ubirch/ubirch-protocol-go/ubirch/v2"
 
 	log "github.com/sirupsen/logrus"
+
+	"time"
 )
 
 type operation string
@@ -71,8 +73,9 @@ func (msg HTTPRequest) respond(resp HTTPResponse) {
 }
 
 // handle incoming messages, create, sign and send a chained ubirch protocol packet (UPP) to the ubirch backend
-func (s *Signer) chainer(jobs <-chan HTTPRequest) error {
+func (s *Signer) chainer(jobs <-chan HTTPRequest, elapsed chan<- time.Duration) error {
 	log.Debugf("starting chainer")
+	defer close(elapsed)
 
 	for msg := range jobs {
 		// the message might have waited in the channel for a while
@@ -82,6 +85,8 @@ func (s *Signer) chainer(jobs <-chan HTTPRequest) error {
 		}
 
 		log.Infof("%s: anchor hash [chained]: %s", msg.ID, base64.StdEncoding.EncodeToString(msg.Hash[:]))
+
+		start := time.Now()
 
 		upp, err := s.getChainedUPP(msg.ID, msg.Hash[:])
 		if err != nil {
@@ -93,6 +98,8 @@ func (s *Signer) chainer(jobs <-chan HTTPRequest) error {
 		resp := s.sendUPP(msg, upp)
 
 		msg.respond(resp)
+
+		elapsed <- time.Since(start)
 
 		// persist last signature only if UPP was successfully received by ubirch backend
 		if httpSuccess(resp.StatusCode) {
