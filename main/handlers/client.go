@@ -19,6 +19,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	h "github.com/ubirch/ubirch-client-go/main/handlers/httphelper"
+	"github.com/ubirch/ubirch-client-go/main/server"
 	"io/ioutil"
 	"net/http"
 
@@ -119,18 +121,18 @@ func (c *Client) SubmitCSR(uid uuid.UUID, csr []byte) error {
 	return nil
 }
 
-func (c *Client) sendToAuthService(uid uuid.UUID, auth string, upp []byte) (HTTPResponse, error) {
+func (c *Client) sendToAuthService(uid uuid.UUID, auth string, upp []byte) (h.HTTPResponse, error) {
 	return post(c.AuthServiceURL, upp, ubirchHeader(uid, auth))
 }
 
 // post submits a message to a backend service
 // returns the response or encountered errors
-func post(serviceURL string, data []byte, header map[string]string) (HTTPResponse, error) {
-	client := &http.Client{Timeout: BackendRequestTimeout}
+func post(serviceURL string, data []byte, header map[string]string) (h.HTTPResponse, error) {
+	client := &http.Client{Timeout: server.BackendRequestTimeout}
 
 	req, err := http.NewRequest(http.MethodPost, serviceURL, bytes.NewBuffer(data))
 	if err != nil {
-		return HTTPResponse{}, fmt.Errorf("can't make new post request: %v", err)
+		return h.HTTPResponse{}, fmt.Errorf("can't make new post request: %v", err)
 	}
 
 	for k, v := range header {
@@ -139,7 +141,7 @@ func post(serviceURL string, data []byte, header map[string]string) (HTTPRespons
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return HTTPResponse{}, err
+		return h.HTTPResponse{}, err
 	}
 
 	//noinspection GoUnhandledErrorResult
@@ -147,10 +149,10 @@ func post(serviceURL string, data []byte, header map[string]string) (HTTPRespons
 
 	respBodyBytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return HTTPResponse{}, err
+		return h.HTTPResponse{}, err
 	}
 
-	return HTTPResponse{
+	return h.HTTPResponse{
 		StatusCode: resp.StatusCode,
 		Header:     resp.Header,
 		Content:    respBodyBytes,

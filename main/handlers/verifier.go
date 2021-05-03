@@ -20,6 +20,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	h "github.com/ubirch/ubirch-client-go/main/handlers/httphelper"
 	"io/ioutil"
 	"net/http"
 	"strings"
@@ -51,14 +52,14 @@ type Verifier struct {
 	VerifyFromKnownIdentitiesOnly bool
 }
 
-func (v *Verifier) Verify(hash []byte) HTTPResponse {
+func (v *Verifier) Verify(hash []byte) h.HTTPResponse {
 	log.Infof("verifying hash %s", base64.StdEncoding.EncodeToString(hash))
 
 	// retrieve certificate for hash from the ubirch backend
 	code, upp, err := v.loadUPP(hash)
 	if err != nil {
 		log.Error(err)
-		return ErrorResponse(code, err.Error())
+		return h.ErrorResponse(code, err.Error())
 	}
 	log.Debugf("retrieved UPP %x", upp)
 
@@ -188,7 +189,7 @@ func (v *Verifier) loadPublicKey(id uuid.UUID) (pubKeyPEM []byte, err error) {
 	return pubKeyPEM, nil
 }
 
-func getVerificationResponse(respCode int, hash []byte, upp []byte, id uuid.UUID, pkey []byte, errMsg string) HTTPResponse {
+func getVerificationResponse(respCode int, hash []byte, upp []byte, id uuid.UUID, pkey []byte, errMsg string) h.HTTPResponse {
 	verificationResp, err := json.Marshal(verificationResponse{
 		Hash:   hash,
 		UPP:    upp,
@@ -204,7 +205,7 @@ func getVerificationResponse(respCode int, hash []byte, upp []byte, id uuid.UUID
 		log.Errorf("%s", string(verificationResp))
 	}
 
-	return HTTPResponse{
+	return h.HTTPResponse{
 		StatusCode: respCode,
 		Header:     http.Header{"Content-Type": {"application/json"}},
 		Content:    verificationResp,

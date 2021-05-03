@@ -1,9 +1,10 @@
-package handlers
+package server
 
 import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
+	h "github.com/ubirch/ubirch-client-go/main/handlers/httphelper"
 	"testing"
 )
 
@@ -27,7 +28,7 @@ func TestSortedCompactJson(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		out, err := GetSortedCompactJSON(test.testInput)
+		out, err := h.GetSortedCompactJSON(test.testInput)
 		if err != nil {
 			t.Errorf("getSortedCompactJSON returned error: %v", err)
 		}

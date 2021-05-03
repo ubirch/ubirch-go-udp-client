@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"github.com/ubirch/ubirch-client-go/main/config"
 	"github.com/ubirch/ubirch-client-go/main/handlers"
+	"github.com/ubirch/ubirch-client-go/main/init"
+	"github.com/ubirch/ubirch-client-go/main/server"
 	"github.com/ubirch/ubirch-client-go/main/uc"
 	"github.com/ubirch/ubirch-client-go/main/vars"
 	"os"
@@ -51,22 +53,7 @@ func main() {
 		configFile = "config.json"
 	)
 
-	var configDir string
-	migrate := false
-	diffPort := false
-
-	if len(os.Args) > 1 {
-		for _, arg := range os.Args[1:] {
-			log.Info(arg)
-			if arg == vars.MigrateArg {
-				migrate = true
-			} else if arg == "88"{
-				diffPort = true
-			}else {
-				configDir = arg
-			}
-		}
-	}
+	configDir, migrate, diffPort := getArgs()
 
 	log.SetFormatter(&log.JSONFormatter{})
 	log.Printf("UBIRCH client (%s, build=%s)", Version, Build)
@@ -80,13 +67,9 @@ func main() {
 	if diffPort {
 		conf.TCP_addr = ":8088"
 	}
-	if migrate {
-		err := handlers.Migrate(conf)
-		if err != nil {
-			log.Panicf("could not migrate, error %v", err)
-		}
-		os.Exit(0)
-	}
+
+	initMigrate(migrate, conf)
+
 	ctxManager, err := handlers.GetCtxManager(conf)
 	if err != nil {
 		log.Fatal(err)
@@ -125,8 +108,8 @@ func main() {
 		VerifyFromKnownIdentitiesOnly: false, // TODO: make configurable
 	}
 
-	httpServer := handlers.HTTPServer{
-		Router:   handlers.NewRouter(),
+	httpServer := server.HTTPServer{
+		Router:   server.NewRouter(),
 		Addr:     conf.TCP_addr,
 		TLS:      conf.TLS,
 		CertFile: conf.TLS_CertFile,
@@ -137,7 +120,7 @@ func main() {
 	}
 
 	globals := handlers.Globals{
-		Config: conf,
+		Config:  conf,
 		Version: Version,
 	}
 
@@ -156,7 +139,7 @@ func main() {
 	}
 
 	// set up endpoint for chaining
-	httpServer.AddServiceEndpoint(handlers.ServerEndpoint{
+	httpServer.AddServiceEndpoint(server.ServerEndpoint{
 		Path: fmt.Sprintf("/{%s}", handlers.UUIDKey),
 		Service: &handlers.ChainingService{
 			Signer: &signer,
@@ -164,7 +147,7 @@ func main() {
 	})
 
 	// set up endpoint for signing
-	httpServer.AddServiceEndpoint(handlers.ServerEndpoint{
+	httpServer.AddServiceEndpoint(server.ServerEndpoint{
 		Path: fmt.Sprintf("/{%s}/{%s}", handlers.UUIDKey, handlers.OperationKey),
 		Service: &handlers.SigningService{
 
@@ -173,7 +156,7 @@ func main() {
 	})
 
 	// set up endpoint for verification
-	httpServer.AddServiceEndpoint(handlers.ServerEndpoint{
+	httpServer.AddServiceEndpoint(server.ServerEndpoint{
 		Path: fmt.Sprintf("/%s", handlers.VerifyPath),
 		Service: &handlers.VerificationService{
 			Verifier: &verifier,
@@ -191,6 +174,36 @@ func main() {
 	}
 
 	log.Info("shut down client")
+}
+
+func initMigrate(migrate bool, conf config.Config) {
+	if migrate {
+		err := init.Migrate(conf)
+		if err != nil {
+			log.Panicf("could not migrate, error %v", err)
+		}
+		os.Exit(0)
+	}
+}
+
+func getArgs() (string, bool, bool) {
+	var configDir string
+	migrate := false
+	diffPort := false
+
+	if len(os.Args) > 1 {
+		for _, arg := range os.Args[1:] {
+			log.Info(arg)
+			if arg == vars.MigrateArg {
+				migrate = true
+			} else if arg == "88" {
+				diffPort = true
+			} else {
+				configDir = arg
+			}
+		}
+	}
+	return configDir, migrate, diffPort
 }
 
 type identities struct {

@@ -1,8 +1,10 @@
-package handlers
+package server
 
 import (
 	"context"
 	"fmt"
+	"github.com/ubirch/ubirch-client-go/main/handlers"
+	"github.com/ubirch/ubirch-client-go/main/vars"
 	"net/http"
 	"path"
 	"time"
@@ -25,7 +27,7 @@ const (
 
 type ServerEndpoint struct {
 	Path string
-	Service
+	handlers.Service
 }
 
 func (*ServerEndpoint) HandleOptions(http.ResponseWriter, *http.Request) {
@@ -59,7 +61,7 @@ func (srv *HTTPServer) SetUpCORS(allowedOrigins []string, debug bool) {
 }
 
 func (srv *HTTPServer) AddServiceEndpoint(endpoint ServerEndpoint) {
-	hashEndpointPath := path.Join(endpoint.Path, HashEndpoint)
+	hashEndpointPath := path.Join(endpoint.Path, vars.HashEndpoint)
 
 	srv.Router.Post(endpoint.Path, endpoint.HandleRequest)
 	srv.Router.Post(hashEndpointPath, endpoint.HandleRequest)

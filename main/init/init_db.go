@@ -1,10 +1,11 @@
-package handlers
+package init
 
 import (
 	"fmt"
 	log "github.com/sirupsen/logrus"
 	"github.com/ubirch/ubirch-client-go/main/config"
 	"github.com/ubirch/ubirch-client-go/main/ent"
+	"github.com/ubirch/ubirch-client-go/main/handlers"
 	"github.com/ubirch/ubirch-client-go/main/keystr"
 	"github.com/ubirch/ubirch-client-go/main/vars"
 	"os"
@@ -38,7 +39,7 @@ func Migrate(c config.Config) error {
 		return err
 	}
 
-	dbManager, err := NewSqlDatabaseInfo(c)
+	dbManager, err := handlers.NewSqlDatabaseInfo(c)
 	if err != nil {
 		return err
 	}
@@ -52,7 +53,7 @@ func Migrate(c config.Config) error {
 }
 
 func getAllIdentitiesFromLegacyCtx(c config.Config) ([]ent.Identity, error) {
-	fileManager, err := NewFileManager(c.ConfigDir, c.SecretBytes16)
+	fileManager, err := handlers.NewFileManager(c.ConfigDir, c.SecretBytes16)
 	if err != nil {
 		return nil, err
 	}
@@ -105,24 +106,24 @@ func getAllIdentitiesFromLegacyCtx(c config.Config) ([]ent.Identity, error) {
 }
 
 // TODO: check if there is not an more elegant way of checking for tables
-func checkForTable(dm *DatabaseManager) error {
+func checkForTable(dm *handlers.DatabaseManager) error {
 
 	var table Table
 	query := fmt.Sprintf("SELECT to_regclass('%s') IS NOT NULL", vars.PostgreSqlTableName)
 
-	if err := dm.db.QueryRow(query).Scan(&table.exists); err != nil {
+	if err := dm.Db.QueryRow(query).Scan(&table.exists); err != nil {
 		return fmt.Errorf("scan rows error: %v", err)
 	}
 	if !table.exists {
 		log.Printf("database table %s doesn't exist creating table", vars.PostgreSqlTableName)
-		if _, err := dm.db.Exec(CREATE[Postgres]); err != nil {
+		if _, err := dm.Db.Exec(CREATE[Postgres]); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func migrateIdentities(c config.Config, dm *DatabaseManager, identities []ent.Identity) error {
+func migrateIdentities(c config.Config, dm *handlers.DatabaseManager, identities []ent.Identity) error {
 
 	ks, err := keystr.NewEncryptedKeystore(c.SecretBytes32)
 	if err != nil {
@@ -134,7 +135,7 @@ func migrateIdentities(c config.Config, dm *DatabaseManager, identities []ent.Id
 		if err != nil {
 			return err
 		}
-		_, err = dm.db.Exec("INSERT INTO identity (uid, private_key, public_key, signature, auth_token) VALUES ($1, $2, $3, $4, $5);",
+		_, err = dm.Db.Exec("INSERT INTO identity (uid, private_key, public_key, signature, auth_token) VALUES ($1, $2, $3, $4, $5);",
 			&id.Uid, encryptedPrivateKey, &id.PublicKey, &id.Signature, &id.AuthToken)
 		if err != nil {
 			return err

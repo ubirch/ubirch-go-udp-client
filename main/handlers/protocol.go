@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ubirch/ubirch-client-go/main/config"
 	"github.com/ubirch/ubirch-client-go/main/ent"
+	h "github.com/ubirch/ubirch-client-go/main/handlers/httphelper"
 	"github.com/ubirch/ubirch-protocol-go/ubirch/v2"
 )
 
@@ -36,7 +37,7 @@ type ContextManager interface {
 
 	GetPublicKey(uid uuid.UUID) ([]byte, error)
 
-	SendChainedUpp(ctx context.Context, msg HTTPRequest, s *Signer) (*HTTPResponse, error)
+	SendChainedUpp(ctx context.Context, msg h.HTTPRequest, s *Signer) (*h.HTTPResponse, error)
 
 	GetAuthToken(uid uuid.UUID) (string, error)
 }

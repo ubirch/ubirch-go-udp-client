@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/ubirch/ubirch-client-go/main/ent"
+	h "github.com/ubirch/ubirch-client-go/main/handlers/httphelper"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -36,7 +37,7 @@ type FileManager struct {
 	keystoreMutex     *sync.RWMutex
 }
 
-func (f *FileManager) SendChainedUpp(ctx context.Context, msg HTTPRequest, s *Signer) (*HTTPResponse, error) {
+func (f *FileManager) SendChainedUpp(ctx context.Context, msg h.HTTPRequest, s *Signer) (*h.HTTPResponse, error) {
 	panic("not implemented")
 }
 

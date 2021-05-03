@@ -18,6 +18,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	h "github.com/ubirch/ubirch-client-go/main/handlers/httphelper"
+	"github.com/ubirch/ubirch-client-go/main/server"
 	"net/http"
 	"os"
 
@@ -49,7 +51,7 @@ type signingResponse struct {
 	Error     string       `json:"error,omitempty"`
 	Hash      []byte       `json:"hash,omitempty"`
 	UPP       []byte       `json:"upp,omitempty"`
-	Response  HTTPResponse `json:"response,omitempty"`
+	Response  h.HTTPResponse `json:"response,omitempty"`
 	RequestID string       `json:"requestID,omitempty"`
 }
 
@@ -58,19 +60,19 @@ type Signer struct {
 	Client   *Client
 }
 
-func (s *Signer) Sign(msg HTTPRequest, op operation) HTTPResponse {
+func (s *Signer) Sign(msg h.HTTPRequest, op operation) h.HTTPResponse {
 	log.Infof("%s: %s hash: %s", msg.ID, op, base64.StdEncoding.EncodeToString(msg.Hash[:]))
 
 	pemPrivateKey, err := s.Protocol.GetPrivateKey(msg.ID)
 	if err != nil {
 		log.Errorf("%s: could not fetch private Key for UUID: %v", msg.ID, err)
-		return ErrorResponse(http.StatusInternalServerError, "")
+		return h.ErrorResponse(http.StatusInternalServerError, "")
 	}
 
 	uppBytes, err := s.getSignedUPP(msg.ID, msg.Hash, pemPrivateKey, op)
 	if err != nil {
 		log.Errorf("%s: could not create signed UPP: %v", msg.ID, err)
-		return ErrorResponse(http.StatusInternalServerError, "")
+		return h.ErrorResponse(http.StatusInternalServerError, "")
 	}
 	log.Debugf("%s: signed UPP: %x", msg.ID, uppBytes)
 
@@ -108,16 +110,16 @@ func (s *Signer) getSignedUPP(id uuid.UUID, hash [32]byte, decryptedPrivate []by
 		})
 }
 
-func (s *Signer) SendUPP(msg HTTPRequest, upp []byte) HTTPResponse {
+func (s *Signer) SendUPP(msg h.HTTPRequest, upp []byte) h.HTTPResponse {
 	// send UPP to ubirch backend
 	backendResp, err := s.Client.sendToAuthService(msg.ID, msg.Auth, upp)
 	if err != nil {
 		if os.IsTimeout(err) {
-			log.Errorf("%s: request to UBIRCH Authentication Service timed out after %s: %v", msg.ID, BackendRequestTimeout.String(), err)
-			return ErrorResponse(http.StatusGatewayTimeout, "")
+			log.Errorf("%s: request to UBIRCH Authentication Service timed out after %s: %v", msg.ID, server.BackendRequestTimeout.String(), err)
+			return h.ErrorResponse(http.StatusGatewayTimeout, "")
 		} else {
 			log.Errorf("%s: sending request to UBIRCH Authentication Service failed: %v", msg.ID, err)
-			return ErrorResponse(http.StatusInternalServerError, "")
+			return h.ErrorResponse(http.StatusInternalServerError, "")
 		}
 	}
 	log.Debugf("%s: backend response: (%d) %x", msg.ID, backendResp.StatusCode, backendResp.Content)
@@ -152,18 +154,7 @@ func getRequestID(respUPP ubirch.UPP) (string, error) {
 	return requestID.String(), nil
 }
 
-func ErrorResponse(code int, message string) HTTPResponse {
-	if message == "" {
-		message = http.StatusText(code)
-	}
-	return HTTPResponse{
-		StatusCode: code,
-		Header:     http.Header{"Content-Type": {"text/plain; charset=utf-8"}},
-		Content:    []byte(message),
-	}
-}
-
-func getSigningResponse(respCode int, msg HTTPRequest, upp []byte, backendResp HTTPResponse, requestID string, errMsg string) HTTPResponse {
+func getSigningResponse(respCode int, msg h.HTTPRequest, upp []byte, backendResp h.HTTPResponse, requestID string, errMsg string) h.HTTPResponse {
 	signingResp, err := json.Marshal(signingResponse{
 		Hash:      msg.Hash[:],
 		UPP:       upp,
@@ -179,7 +170,7 @@ func getSigningResponse(respCode int, msg HTTPRequest, upp []byte, backendResp H
 		log.Errorf("%s: request failed: (%d) %s", msg.ID, respCode, string(signingResp))
 	}
 
-	return HTTPResponse{
+	return h.HTTPResponse{
 		StatusCode: respCode,
 		Header:     http.Header{"Content-Type": {"application/json"}},
 		Content:    signingResp,

@@ -21,9 +21,11 @@ import (
 	"encoding/base64"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	log "github.com/sirupsen/logrus"
 	"github.com/ubirch/ubirch-client-go/main/config"
 	"github.com/ubirch/ubirch-client-go/main/ent"
+	h "github.com/ubirch/ubirch-client-go/main/handlers/httphelper"
 	"github.com/ubirch/ubirch-client-go/main/keystr"
 	"github.com/ubirch/ubirch-client-go/main/vars"
 	// postgres driver is imported for side effects
@@ -42,10 +44,10 @@ type Database interface {
 // Database contains the postgres database connection, and offers methods
 // for interacting with the database.
 type DatabaseManager struct {
-	options     *sql.TxOptions
-	db          *sql.DB
-	client      Client
-	encKeyStore *keystr.EncryptedKeystore
+	Options     *sql.TxOptions
+	Db          *sql.DB
+	Client      Client
+	EncKeyStore *keystr.EncryptedKeystore
 }
 
 // Ensure Database implements the ContextManager interface
@@ -76,18 +78,18 @@ func NewSqlDatabaseInfo(c config.Config) (*DatabaseManager, error) {
 	}
 
 	return &DatabaseManager{
-		options: &sql.TxOptions{
+		Options: &sql.TxOptions{
 			Isolation: sql.LevelReadCommitted,
 			ReadOnly:  false,
 		},
-		db:          pg,
-		encKeyStore: keystore}, nil
+		Db:          pg,
+		EncKeyStore: keystore}, nil
 }
 
 func (dm *DatabaseManager) GetPrivateKey(uid uuid.UUID) ([]byte, error) {
 
 	var identity ent.Identity
-	if err := dm.db.QueryRow("SELECT private_key FROM identity WHERE uid = $1", uid.String()).
+	if err := dm.Db.QueryRow("SELECT private_key FROM identity WHERE uid = $1", uid.String()).
 		Scan(&identity.PrivateKey); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -95,7 +97,7 @@ func (dm *DatabaseManager) GetPrivateKey(uid uuid.UUID) ([]byte, error) {
 			return nil, err
 		}
 	}
-	decryptedPrivateKey, err := dm.encKeyStore.Decrypt(identity.PrivateKey)
+	decryptedPrivateKey, err := dm.EncKeyStore.Decrypt(identity.PrivateKey)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +108,7 @@ func (dm *DatabaseManager) GetPublicKey(uid uuid.UUID) ([]byte, error) {
 
 	var identity ent.Identity
 
-	err := dm.db.QueryRow("SELECT public_key FROM identity WHERE uid = $1", uid.String()).
+	err := dm.Db.QueryRow("SELECT public_key FROM identity WHERE uid = $1", uid.String()).
 		Scan(&identity.PublicKey)
 	if err != nil {
 		return nil, err
@@ -119,12 +121,12 @@ func (dm *DatabaseManager) GetAuthToken(uid uuid.UUID) (string, error) {
 
 	var identity ent.Identity
 
-	err := dm.db.QueryRow("SELECT auth_token FROM identity WHERE uid = $1", uid.String()).
+	err := dm.Db.QueryRow("SELECT auth_token FROM identity WHERE uid = $1", uid.String()).
 		Scan(&identity.AuthToken)
 	if err != nil {
-		//if err.Error() == pq.ErrorCode("53300").Name() {
-		//
-		//}
+		if err.Error() == pq.ErrorCode("53300").Name() {
+			return "", err
+		}
 		return "", err
 	}
 
@@ -134,7 +136,7 @@ func (dm *DatabaseManager) GetAuthToken(uid uuid.UUID) (string, error) {
 func (dm *DatabaseManager) FetchIdentity(uid uuid.UUID) (*ent.Identity, error) {
 	var identity ent.Identity
 
-	err := dm.db.QueryRow("SELECT * FROM identity WHERE uid = $1", uid.String()).
+	err := dm.Db.QueryRow("SELECT * FROM identity WHERE uid = $1", uid.String()).
 		Scan(&identity.Uid, &identity.PrivateKey, &identity.PublicKey, &identity.Signature, &identity.AuthToken)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -153,7 +155,7 @@ func (dm *DatabaseManager) StoreIdentity(ctx context.Context, identity ent.Ident
 		return err
 	}
 
-	tx, err := dm.db.BeginTx(ctx, dm.options)
+	tx, err := dm.Db.BeginTx(ctx, dm.Options)
 	if err != nil {
 		return err
 	}
@@ -177,7 +179,7 @@ func (dm *DatabaseManager) StoreIdentity(ctx context.Context, identity ent.Ident
 	}
 
 	genesisSignature := make([]byte, idHandler.Protocol.SignatureLength())
-	encryptedPrivateKey, err := dm.encKeyStore.Encrypt(identity.PrivateKey)
+	encryptedPrivateKey, err := dm.EncKeyStore.Encrypt(identity.PrivateKey)
 	if err != nil {
 		tx.Rollback()
 		return err
@@ -194,10 +196,10 @@ func (dm *DatabaseManager) StoreIdentity(ctx context.Context, identity ent.Ident
 }
 
 // handle incoming messages, create, sign and send a chained ubirch protocol packet (UPP) to the ubirch backend
-func (dm *DatabaseManager) SendChainedUpp(ctx context.Context, msg HTTPRequest, s *Signer) (*HTTPResponse, error) {
+func (dm *DatabaseManager) SendChainedUpp(ctx context.Context, msg h.HTTPRequest, s *Signer) (*h.HTTPResponse, error) {
 	log.Infof("%s: anchor hash [chained]: %s", msg.ID, base64.StdEncoding.EncodeToString(msg.Hash[:]))
 
-	tx, err := dm.db.BeginTx(ctx, dm.options)
+	tx, err := dm.Db.BeginTx(ctx, dm.Options)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -209,7 +211,7 @@ func (dm *DatabaseManager) SendChainedUpp(ctx context.Context, msg HTTPRequest, 
 		return nil, err
 	}
 
-	decryptedPrivateKey, err := dm.encKeyStore.Decrypt(id.PrivateKey)
+	decryptedPrivateKey, err := dm.EncKeyStore.Decrypt(id.PrivateKey)
 	if err != nil {
 		tx.Rollback()
 		return nil, err
