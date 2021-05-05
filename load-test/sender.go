@@ -39,7 +39,7 @@ func NewSender(testCtx *TestCtx) *Sender {
 }
 
 func (s *Sender) register(id string, auth string, registerAuth string) error {
-	url := clientBaseURL + "/register"
+	url := clientBaseURL1 + "/register"
 
 	header := http.Header{}
 	header.Set("Content-Type", "application/json")
@@ -82,16 +82,23 @@ func (s *Sender) register(id string, auth string, registerAuth string) error {
 func (s *Sender) sendRequests(id string, auth string) {
 	defer s.testCtx.wg.Done()
 
-	clientURL := clientBaseURL + fmt.Sprintf("/%s/hash", id)
+	clientURL1 := clientBaseURL1 + fmt.Sprintf("/%s/hash", id)
+	clientURL2 := clientBaseURL2 + fmt.Sprintf("/%s/hash", id)
+	clientURL3 := clientBaseURL3 + fmt.Sprintf("/%s/hash", id)
+	clientURL4 := clientBaseURL4 + fmt.Sprintf("/%s/hash", id)
+
 	header := http.Header{}
 	header.Set("Content-Type", "application/octet-stream")
 	header.Set("X-Auth-Token", auth)
 
-	for i := 0; i < numberOfRequestsPerID; i++ {
-		s.testCtx.wg.Add(1)
-		go s.sendAndCheckResponse(clientURL, header)
+	for i := 0; i < numberOfRequestsPerID/4; i++ {
+		s.testCtx.wg.Add(4)
+		go s.sendAndCheckResponse(clientURL1, header)
+		go s.sendAndCheckResponse(clientURL2, header)
+		go s.sendAndCheckResponse(clientURL3, header)
+		go s.sendAndCheckResponse(clientURL4, header)
 
-		time.Sleep(time.Second / requestsPerSecondPerID)
+		time.Sleep((4 * time.Second) / requestsPerSecondPerID)
 	}
 }
 

@@ -67,6 +67,8 @@ func (s *ChainingService) HandleRequest(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	log.Debugf("%s: incomming chaining request", msg.ID)
+
 	exists, err := s.checkExists(msg.ID)
 	if err != nil {
 		log.Errorf("%s: %v", msg.ID, err)
