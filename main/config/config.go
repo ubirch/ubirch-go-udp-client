@@ -29,6 +29,7 @@ import (
 
 const (
 	secretLength32 = 32
+	minSaltLength  = 16
 
 	DEV_STAGE  = "dev"
 	DEMO_STAGE = "demo"
@@ -54,6 +55,7 @@ type Config struct {
 	Devices          map[string]string `json:"devices"`                              // maps UUIDs to backend auth tokens (mandatory)
 	Secret16Base64   string            `json:"secret" envconfig:"secret"`            // 16 bytes secret used to encrypt the key store (mandatory for migration) LEGACY
 	Secret32Base64   string            `json:"secret32" envconfig:"secret32"`        // 32 byte secret used to encrypt the key store (mandatory)
+	SaltBase64       string            `json:"salt" envconfig:"SALT"`                // salt for Key Derivation Function, should be 16 bytes or longer (mandatory)
 	RegisterAuth     string            `json:"registerAuth"`                         // auth token needed for new identity registration
 	Env              string            `json:"env"`                                  // the ubirch backend environment [dev, demo, prod], defaults to 'prod'
 	PostgresDSN      string            `json:"postgresDSN" envconfig:"POSTGRES_DSN"` // data source name for postgres database
@@ -68,6 +70,7 @@ type Config struct {
 	Debug            bool              `json:"debug"`                                // enable extended debug output, defaults to 'false'
 	LogTextFormat    bool              `json:"logTextFormat"`                        // log in text format for better human readability, default format is JSON
 	SecretBytes32    []byte            // the decoded 32 byte key store secret for database (set automatically)
+	SaltBytes        []byte            // the decoded key derivation salt
 	KeyService       string            // key service URL (set automatically)
 	IdentityService  string            // identity service URL (set automatically)
 	Niomon           string            // authentication service URL (set automatically)
@@ -90,16 +93,22 @@ func (c *Config) Load(configDir, filename string) error {
 		return err
 	}
 
+	if c.Debug {
+		log.SetLevel(log.DebugLevel)
+	}
+
+	if c.LogTextFormat {
+		log.SetFormatter(&log.TextFormatter{FullTimestamp: true, TimestampFormat: "2006-01-02 15:04:05.000 -0700"})
+	}
+
 	c.SecretBytes32, err = base64.StdEncoding.DecodeString(c.Secret32Base64)
 	if err != nil {
 		return fmt.Errorf("unable to decode base64 encoded secret (%s): %v", c.Secret32Base64, err)
 	}
 
-	if c.Debug {
-		log.SetLevel(log.DebugLevel)
-	}
-	if c.LogTextFormat {
-		log.SetFormatter(&log.TextFormatter{FullTimestamp: true, TimestampFormat: "2006-01-02 15:04:05.000 -0700"})
+	c.SaltBytes, err = base64.StdEncoding.DecodeString(c.SaltBase64)
+	if err != nil {
+		return fmt.Errorf("unable to decode base64 encoded salt (%s): %v", c.SaltBase64, err)
 	}
 
 	err = c.loadIdentitiesFile()
@@ -142,6 +151,10 @@ func (c *Config) loadFile(filename string) error {
 func (c *Config) checkMandatory() error {
 	if len(c.SecretBytes32) != secretLength32 {
 		return fmt.Errorf("secret for aes-256 key encryption ('secret32') length must be %d bytes (is %d)", secretLength32, len(c.SecretBytes32))
+	}
+
+	if len(c.SaltBytes) < minSaltLength {
+		return fmt.Errorf("salt for key derivation ('salt') length must be at least %d bytes (is %d)", minSaltLength, len(c.SaltBytes))
 	}
 
 	if len(c.RegisterAuth) == 0 {

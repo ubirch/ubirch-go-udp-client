@@ -81,7 +81,7 @@ func (i *IdentityHandler) InitIdentity(uid uuid.UUID, auth string) (csr []byte, 
 	}
 
 	newIdentity := &ent.Identity{
-		Uid:        uid.String(),
+		Uid:        uid,
 		PrivateKey: privKeyPEM,
 		PublicKey:  pubKeyPEM,
 		Signature:  make([]byte, i.Protocol.SignatureLength()),

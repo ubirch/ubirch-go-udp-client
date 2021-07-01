@@ -17,22 +17,21 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/google/uuid"
+	"os"
+	"os/signal"
+	"syscall"
+
 	"github.com/ubirch/ubirch-client-go/main/adapters/clients"
 	"github.com/ubirch/ubirch-client-go/main/adapters/handlers"
-	h "github.com/ubirch/ubirch-client-go/main/adapters/httphelper"
 	"github.com/ubirch/ubirch-client-go/main/adapters/repository"
 	"github.com/ubirch/ubirch-client-go/main/config"
-	p "github.com/ubirch/ubirch-client-go/main/prometheus"
 	"github.com/ubirch/ubirch-client-go/main/uc"
 	"github.com/ubirch/ubirch-client-go/main/vars"
 	"golang.org/x/sync/errgroup"
-	"os"
-	"os/signal"
-	"sync"
-	"syscall"
 
 	log "github.com/sirupsen/logrus"
+	h "github.com/ubirch/ubirch-client-go/main/adapters/httphelper"
+	p "github.com/ubirch/ubirch-client-go/main/prometheus"
 )
 
 // handle graceful shutdown
@@ -151,7 +150,7 @@ func main() {
 		IdentityServiceURL: conf.IdentityService,
 	}
 
-	protocol, err := repository.NewExtendedProtocol(ctxManager, conf.SecretBytes32, client)
+	protocol, err := repository.NewExtendedProtocol(ctxManager, conf.SecretBytes32, conf.SaltBytes, client)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -172,9 +171,7 @@ func main() {
 	}
 
 	signer := handlers.Signer{
-		Protocol:             protocol,
-		AuthTokensBuffer:     map[uuid.UUID]string{},
-		AuthTokenBufferMutex: &sync.RWMutex{},
+		ExtendedProtocol: protocol,
 	}
 
 	verifier := handlers.Verifier{

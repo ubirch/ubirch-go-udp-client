@@ -30,6 +30,7 @@ type ContextManager interface {
 	FetchIdentity(transactionCtx interface{}, uid uuid.UUID) (*ent.Identity, error)
 
 	SetSignature(transactionCtx interface{}, uid uuid.UUID, signature []byte) error
+	SetAuthToken(transactionCtx interface{}, uid uuid.UUID, authToken string) error
 
 	GetPrivateKey(uid uuid.UUID) ([]byte, error)
 	GetPublicKey(uid uuid.UUID) ([]byte, error)

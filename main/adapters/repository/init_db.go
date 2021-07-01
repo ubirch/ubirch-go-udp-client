@@ -5,20 +5,24 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"fmt"
+	"github.com/google/uuid"
 	log "github.com/sirupsen/logrus"
 	"github.com/ubirch/ubirch-client-go/main/config"
 	"github.com/ubirch/ubirch-client-go/main/ent"
 	"github.com/ubirch/ubirch-client-go/main/vars"
 	"os"
+	"strings"
 )
 
-const MigrationVersion = "1.0.1"
+const (
+	VersionTableName = "version"
+	MigrationID      = "dbMigration"
+	MigrationVersion = "2.0"
+)
 
 const (
 	PostgresIdentity = iota
 	PostgresVersion
-	//MySQL
-	//SQLite
 )
 
 type Migration struct {
@@ -36,8 +40,6 @@ var create = map[int]string{
 	PostgresVersion: "CREATE TABLE IF NOT EXISTS %s(" +
 		"id VARCHAR(255) NOT NULL PRIMARY KEY, " +
 		"migration_version VARCHAR(255) NOT NULL);",
-	//MySQL:    "CREATE TABLE identity (id INT, datetime TIMESTAMP)",
-	//SQLite:   "CREATE TABLE identity (id INTEGER, datetime TEXT)",
 }
 
 func CreateTable(tableType int, tableName string) string {
@@ -45,36 +47,52 @@ func CreateTable(tableType int, tableName string) string {
 }
 
 func Migrate(c config.Config) error {
-	txCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	dbManager, err := NewSqlDatabaseInfo(c.PostgresDSN, vars.PostgreSqlIdentityTableName)
+	dm, err := NewSqlDatabaseInfo(c.PostgresDSN, vars.PostgreSqlIdentityTableName)
 	if err != nil {
 		return err
 	}
 
-	tx, shouldMigrate, err := checkVersion(txCtx, dbManager)
+	v, err := getVersion(dm)
 	if err != nil {
 		return err
 	}
-	if !shouldMigrate {
+	if v.MigrationVersion == MigrationVersion {
 		log.Infof("database migration version already up to date")
 		return nil
 	}
+	log.Debugf("database migration version: %s / application migration version: %s", v.MigrationVersion, MigrationVersion)
 
-	log.Println("database migration version updated, ready to upgrade")
-	identitiesToPort, err := getAllIdentitiesFromLegacyCtx(c)
+	p, err := NewExtendedProtocol(dm, c.SecretBytes32, c.SaltBytes, nil)
 	if err != nil {
 		return err
 	}
 
-	err = migrateIdentities(c, dbManager, identitiesToPort)
-	if err != nil {
-		return err
+	if strings.HasPrefix(v.MigrationVersion, "0.") {
+		// migrate from file based context
+		identitiesToPort, err := getAllIdentitiesFromLegacyCtx(c)
+		if err != nil {
+			return err
+		}
+
+		err = migrateIdentities(p, identitiesToPort)
+		if err != nil {
+			return err
+		}
+
+		log.Infof("successfully migrated file based context into database")
 	}
 
-	log.Infof("successfully migrated file based context into database")
-	return updateVersion(tx)
+	if strings.HasPrefix(v.MigrationVersion, "1.") {
+		err = encryptTokens(dm, p)
+		if err != nil {
+			return err
+		}
+
+		log.Infof("successfully encrypted auth tokens in database")
+	}
+
+	v.MigrationVersion = MigrationVersion
+	return updateVersion(dm, v)
 }
 
 func getAllIdentitiesFromLegacyCtx(c config.Config) ([]ent.Identity, error) {
@@ -103,7 +121,7 @@ func getAllIdentitiesFromLegacyCtx(c config.Config) ([]ent.Identity, error) {
 	for _, uid := range uids {
 
 		i := ent.Identity{
-			Uid: uid.String(),
+			Uid: uid,
 		}
 
 		i.PrivateKey, err = fileManager.GetPrivateKey(uid)
@@ -140,18 +158,13 @@ func getAllIdentitiesFromLegacyCtx(c config.Config) ([]ent.Identity, error) {
 	return allIdentities, nil
 }
 
-func migrateIdentities(c config.Config, dm *DatabaseManager, identities []ent.Identity) error {
+func migrateIdentities(p *ExtendedProtocol, identities []ent.Identity) error {
 	log.Infof("starting migration...")
-
-	p, err := NewExtendedProtocol(dm, c.SecretBytes32, nil)
-	if err != nil {
-		return err
-	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	tx, err := dm.db.BeginTx(ctx, dm.options)
+	tx, err := p.StartTransaction(ctx)
 	if err != nil {
 		return err
 	}
@@ -162,64 +175,97 @@ func migrateIdentities(c config.Config, dm *DatabaseManager, identities []ent.Id
 		err = p.StoreNewIdentity(tx, &id)
 		if err != nil {
 			if err == ErrExists {
-				log.Warnf("%s: %v -> skip", id.Uid, err)
+				log.Warn(err)
 			} else {
 				return err
 			}
 		}
 	}
 
-	return tx.Commit()
+	return p.CloseTransaction(tx, Commit)
 }
 
-func checkVersion(ctx context.Context, dm *DatabaseManager) (*sql.Tx, bool, error) {
-	var version Migration
+func encryptTokens(dm *DatabaseManager, p *ExtendedProtocol) error {
+	query := fmt.Sprintf("SELECT uid, auth_token FROM %s", dm.tableName)
 
-	tx, err := dm.db.BeginTx(ctx, dm.options)
-	if err != nil {
-		return nil, false, err
-	}
-
-	if _, err := dm.db.Exec(CreateTable(PostgresVersion, vars.PostgreSqlVersionTableName)); err != nil {
-		return tx, false, err
-	}
-
-	err = tx.QueryRow("SELECT * FROM version WHERE id = 'dbMigration' FOR UPDATE").
-		Scan(&version.Id, &version.MigrationVersion)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			shouldMigrate, err := CreateVersionEntry(tx, version)
-			return tx, shouldMigrate, err
-		} else {
-			return tx, false, err
-		}
-	}
-	log.Debugf("database migration version: %s / application migration version: %s", version.MigrationVersion, MigrationVersion)
-	if version.MigrationVersion != MigrationVersion {
-		return tx, true, nil
-	}
-	return tx, false, nil
-}
-
-func CreateVersionEntry(tx *sql.Tx, version Migration) (bool, error) {
-	version.Id = "dbMigration"
-	version.MigrationVersion = MigrationVersion
-	_, err := tx.Exec("INSERT INTO version (id, migration_version) VALUES ($1, $2);",
-		&version.Id, &version.MigrationVersion)
-	if err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func updateVersion(tx *sql.Tx) error {
-	var version Migration
-	version.Id = "dbMigration"
-	version.MigrationVersion = MigrationVersion
-	_, err := tx.Exec("UPDATE version SET migration_version = $1 WHERE id = $2;",
-		&version.MigrationVersion, &version.Id)
+	rows, err := dm.db.Query(query)
 	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	defer rows.Close()
+
+	var (
+		uid  uuid.UUID
+		auth string
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tx, err := p.StartTransaction(ctx)
+	if err != nil {
+		return err
+	}
+
+	for rows.Next() {
+		err = rows.Scan(&uid, &auth)
+		if err != nil {
+			return err
+		}
+
+		err = p.SetAuthToken(tx, uid, auth)
+		if err != nil {
+			return err
+		}
+	}
+	if rows.Err() != nil {
+		return rows.Err()
+	}
+
+	return p.CloseTransaction(tx, Commit)
+}
+
+func getVersion(dm *DatabaseManager) (*Migration, error) {
+	_, err := dm.db.Exec(CreateTable(PostgresVersion, vars.PostgreSqlVersionTableName))
+	if err != nil {
+		return nil, err
+	}
+
+	version := &Migration{
+		Id: MigrationID,
+	}
+
+	query := fmt.Sprintf("SELECT migration_version FROM %s WHERE id = $1", VersionTableName)
+
+	err = dm.db.QueryRow(query, version.Id).
+		Scan(&version.MigrationVersion)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			version.MigrationVersion = "0.0"
+			return version, createVersionEntry(dm, version)
+		} else {
+			return nil, err
+		}
+	}
+	return version, nil
+}
+
+func updateVersion(dm *DatabaseManager, v *Migration) error {
+	query := fmt.Sprintf("UPDATE %s SET migration_version = $1 WHERE id = $2;", VersionTableName)
+	_, err := dm.db.Exec(query,
+		v.MigrationVersion, &v.Id)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func createVersionEntry(dm *DatabaseManager, v *Migration) error {
+	query := fmt.Sprintf("INSERT INTO %s (id, migration_version) VALUES ($1, $2);", VersionTableName)
+	_, err := dm.db.Exec(query,
+		&v.Id, v.MigrationVersion)
+	if err != nil {
+		return err
+	}
+	return nil
 }

@@ -34,28 +34,27 @@ func (s *ChainingService) HandleRequest(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	exists, err := s.checkExists(msg.ID)
+	exists, err := s.Exists(msg.ID)
 	if err != nil {
 		log.Errorf("%s: %v", msg.ID, err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
-
 	if !exists {
 		h.Error(msg.ID, w, fmt.Errorf("unknown UUID"), http.StatusNotFound)
 		return
 	}
 
-	idAuth, err := s.getAuth(msg.ID)
+	msg.Auth = h.AuthToken(r.Header)
+
+	ok, err := s.CheckAuthToken(msg.ID, msg.Auth)
 	if err != nil {
 		log.Errorf("%s: %v", msg.ID, err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
-
-	msg.Auth, err = checkAuth(r, idAuth)
-	if err != nil {
-		h.Error(msg.ID, w, err, http.StatusUnauthorized)
+	if !ok {
+		h.Error(msg.ID, w, fmt.Errorf("invalid auth token"), http.StatusUnauthorized)
 		return
 	}
 
@@ -65,7 +64,7 @@ func (s *ChainingService) HandleRequest(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	tx, identity, err := s.Protocol.FetchIdentityWithLock(r.Context(), msg.ID)
+	tx, identity, err := s.FetchIdentityWithLock(r.Context(), msg.ID)
 	if err != nil {
 		log.Errorf("%s: %v", msg.ID, err)
 		http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
@@ -92,28 +91,27 @@ func (s *SigningService) HandleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	exists, err := s.checkExists(msg.ID)
+	exists, err := s.Exists(msg.ID)
 	if err != nil {
 		log.Errorf("%s: %v", msg.ID, err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
-
 	if !exists {
 		h.Error(msg.ID, w, fmt.Errorf("unknown UUID"), http.StatusNotFound)
 		return
 	}
 
-	idAuth, err := s.getAuth(msg.ID)
+	msg.Auth = h.AuthToken(r.Header)
+
+	ok, err := s.CheckAuthToken(msg.ID, msg.Auth)
 	if err != nil {
 		log.Errorf("%s: %v", msg.ID, err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
-
-	msg.Auth, err = checkAuth(r, idAuth)
-	if err != nil {
-		h.Error(msg.ID, w, err, http.StatusUnauthorized)
+	if !ok {
+		h.Error(msg.ID, w, fmt.Errorf("invalid auth token"), http.StatusUnauthorized)
 		return
 	}
 
@@ -148,17 +146,6 @@ func (v *VerificationService) HandleRequest(w http.ResponseWriter, r *http.Reque
 
 	resp := v.Verify(hash[:])
 	sendResponse(w, resp)
-}
-
-// checkAuth compares the auth token from the request header with a given string and returns it if valid
-// Returns error if auth token is invalid
-func checkAuth(r *http.Request, actualAuth string) (string, error) {
-	headerAuthToken := h.AuthToken(r.Header)
-	if actualAuth != headerAuthToken {
-		return "", fmt.Errorf("invalid auth token")
-	}
-
-	return headerAuthToken, nil
 }
 
 // getOperation returns the operation parameter from the request URL

@@ -27,49 +27,49 @@ var (
 )
 
 func TestDatabaseManager(t *testing.T) {
-	dbManager, err := initDB()
+	dm, err := initDB()
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cleanUp(t, dbManager, cancel)
+	defer cleanUp(t, dm, cancel)
 
 	// check not exists
-	exists, err := dbManager.Exists(uuid.MustParse(testIdentity.Uid))
+	exists, err := dm.Exists(testIdentity.Uid)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if exists {
-		t.Errorf("dbManager.Exists returned TRUE")
+		t.Errorf("dm.Exists returned TRUE")
 	}
 
 	// store identity
-	tx, err := dbManager.StartTransaction(ctx)
+	tx, err := dm.StartTransaction(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = dbManager.StoreNewIdentity(tx, testIdentity)
+	err = dm.StoreNewIdentity(tx, testIdentity)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = dbManager.CloseTransaction(tx, Commit)
+	err = dm.CloseTransaction(tx, Commit)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// check exists
-	exists, err = dbManager.Exists(uuid.MustParse(testIdentity.Uid))
+	exists, err = dm.Exists(testIdentity.Uid)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !exists {
-		t.Errorf("dbManager.Exists returned FALSE")
+		t.Errorf("dm.Exists returned FALSE")
 	}
 
 	// get attributes
-	auth, err := dbManager.GetAuthToken(uuid.MustParse(testIdentity.Uid))
+	auth, err := dm.GetAuthToken(testIdentity.Uid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestDatabaseManager(t *testing.T) {
 		t.Error("GetAuthToken returned unexpected value")
 	}
 
-	pub, err := dbManager.GetPublicKey(uuid.MustParse(testIdentity.Uid))
+	pub, err := dm.GetPublicKey(testIdentity.Uid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestDatabaseManager(t *testing.T) {
 		t.Error("GetPublicKey returned unexpected value")
 	}
 
-	priv, err := dbManager.GetPrivateKey(uuid.MustParse(testIdentity.Uid))
+	priv, err := dm.GetPrivateKey(testIdentity.Uid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,12 +94,12 @@ func TestDatabaseManager(t *testing.T) {
 	}
 
 	// fetch identity
-	tx, err = dbManager.StartTransactionWithLock(ctx, uuid.MustParse(testIdentity.Uid))
+	tx, err = dm.StartTransactionWithLock(ctx, testIdentity.Uid)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	id, err := dbManager.FetchIdentity(tx, uuid.MustParse(testIdentity.Uid))
+	id, err := dm.FetchIdentity(tx, testIdentity.Uid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,28 +122,28 @@ func TestDatabaseManager(t *testing.T) {
 
 	// set signature
 	sig2, _ := base64.StdEncoding.DecodeString(TestSignature2)
-	err = dbManager.SetSignature(tx, uuid.MustParse(testIdentity.Uid), sig2)
+	err = dm.SetSignature(tx, testIdentity.Uid, sig2)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = dbManager.CloseTransaction(tx, Commit)
+	err = dm.CloseTransaction(tx, Commit)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// fetch identity to check signature
-	tx, err = dbManager.StartTransaction(ctx)
+	tx, err = dm.StartTransaction(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	id, err = dbManager.FetchIdentity(tx, uuid.MustParse(testIdentity.Uid))
+	id, err = dm.FetchIdentity(tx, testIdentity.Uid)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = dbManager.CloseTransaction(tx, Commit)
+	err = dm.CloseTransaction(tx, Commit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func initTestIdentity() *ent.Identity {
 	sig, _ := base64.StdEncoding.DecodeString(TestSignature)
 
 	return &ent.Identity{
-		Uid:        uuid.MustParse(TestUUID).String(),
+		Uid:        uuid.MustParse(TestUUID),
 		PrivateKey: priv,
 		PublicKey:  pub,
 		Signature:  sig,
@@ -177,17 +177,17 @@ func initTestIdentity() *ent.Identity {
 	}
 }
 
-func cleanUp(t *testing.T, dbManager *DatabaseManager, cancel context.CancelFunc) {
+func cleanUp(t *testing.T, dm *DatabaseManager, cancel context.CancelFunc) {
 	cancel()
 
 	deleteQuery := fmt.Sprintf("DELETE FROM %s WHERE uid = $1;", TestTableName)
-	_, err := dbManager.db.Exec(deleteQuery, TestUUID)
+	_, err := dm.db.Exec(deleteQuery, TestUUID)
 	if err != nil {
 		t.Error(err)
 	}
 
 	dropTableQuery := fmt.Sprintf("DROP TABLE %s;", TestTableName)
-	_, err = dbManager.db.Exec(dropTableQuery)
+	_, err = dm.db.Exec(dropTableQuery)
 	if err != nil {
 		t.Error(err)
 	}
