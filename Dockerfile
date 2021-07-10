@@ -16,7 +16,9 @@ RUN \
 FROM scratch
 VOLUME /data
 EXPOSE 8080/tcp
+COPY docker/etc/ /etc/
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=builder app/main/main ubirch-client
+USER nobody:nogroup
 ENTRYPOINT ["/ubirch-client"]
 CMD ["/data"]
