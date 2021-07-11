@@ -57,6 +57,7 @@ type Config struct {
 	RegisterAuth     string            `json:"registerAuth"`                         // auth token needed for new identity registration
 	Env              string            `json:"env"`                                  // the ubirch backend environment [dev, demo, prod], defaults to 'prod'
 	PostgresDSN      string            `json:"postgresDSN" envconfig:"POSTGRES_DSN"` // data source name for postgres database
+	SqliteDSN        string            `json:"sqliteDSN" envconfig:"SQLITE_DSN"`     // path to the sqlite db file
 	CSR_Country      string            `json:"CSR_country"`                          // subject country for public key Certificate Signing Requests
 	CSR_Organization string            `json:"CSR_organization"`                     // subject organization for public key Certificate Signing Requests
 	TCP_addr         string            `json:"TCP_addr"`                             // the TCP address for the server to listen on, in the form "host:port", defaults to ":8080"
@@ -110,6 +111,10 @@ func (c *Config) Load(configDir, filename string) error {
 	err = c.checkMandatory()
 	if err != nil {
 		return err
+	}
+
+	if c.SqliteDSN != "" {
+		c.SqliteDSN = filepath.Join(configDir, c.SqliteDSN)
 	}
 
 	// set defaults

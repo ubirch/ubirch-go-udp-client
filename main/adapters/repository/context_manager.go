@@ -37,9 +37,11 @@ type ContextManager interface {
 
 func GetCtxManager(c config.Config) (ContextManager, error) {
 	if c.PostgresDSN != "" {
-		return NewSqlDatabaseInfo(c.PostgresDSN, PostgreSqlIdentityTableName)
+		return NewSqlDatabaseInfo(PostgreSQL, c.PostgresDSN, IdentityTableName)
+	} else if c.SqliteDSN != "" {
+		return NewSqlDatabaseInfo(SQLite, c.SqliteDSN, IdentityTableName)
 	} else {
 		return nil, fmt.Errorf("file-based context management is not supported in the current version. " +
-			"Please set a postgres DSN in the configuration and conntect to a database or downgrade to a version < 2.0.0")
+			"Please set a DSN for a postgres or SQLite in the configuration and use a database or downgrade to a version < 2.0.0")
 	}
 }

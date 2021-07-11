@@ -13,19 +13,18 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-const MigrationVersion = "1.0.1"
-
 const (
 	PostgresIdentity = iota
 	PostgresVersion
-	PostgreSqlIdentityTableName string = "identity"
-	PostgreSqlVersionTableName  string = "version"
-)
+	SQLiteIdentity
+	SQLiteVersion
 
-type Migration struct {
-	Id               string
-	MigrationVersion string
-}
+	IdentityTableName = "identity"
+	VersionTableName  = "version"
+
+	MigrationID      = "dbMigration"
+	MigrationVersion = "1.0.1"
+)
 
 var create = map[int]string{
 	PostgresIdentity: "CREATE TABLE IF NOT EXISTS %s(" +
@@ -37,48 +36,97 @@ var create = map[int]string{
 	PostgresVersion: "CREATE TABLE IF NOT EXISTS %s(" +
 		"id VARCHAR(255) NOT NULL PRIMARY KEY, " +
 		"migration_version VARCHAR(255) NOT NULL);",
-	//MySQL:    "CREATE TABLE identity (id INT, datetime TIMESTAMP)",
-	//SQLite:   "CREATE TABLE identity (id INTEGER, datetime TEXT)",
+
+	SQLiteIdentity: "CREATE TABLE IF NOT EXISTS %s(" +
+		"uid TEXT NOT NULL PRIMARY KEY, " +
+		"private_key BLOB NOT NULL, " +
+		"public_key BLOB NOT NULL, " +
+		"signature BLOB NOT NULL, " +
+		"auth_token TEXT NOT NULL);",
+	SQLiteVersion: "CREATE TABLE IF NOT EXISTS %s(" +
+		"id TEXT NOT NULL PRIMARY KEY, " +
+		"migration_version TEXT NOT NULL);",
 }
 
-func CreateTable(tableType int, tableName string) string {
-	return fmt.Sprintf(create[tableType], tableName)
+func (dm *DatabaseManager) CreateTable(tableType int, tableName string) error {
+	query := fmt.Sprintf(create[tableType], tableName)
+
+	_, err := dm.db.Exec(query)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+type Migration struct {
+	Id               string
+	MigrationVersion string
 }
 
 func Migrate(c config.Config) error {
-	txCtx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	var (
+		dm  *DatabaseManager
+		err error
+	)
 
-	dbManager, err := NewSqlDatabaseInfo(c.PostgresDSN, PostgreSqlIdentityTableName)
+	if c.PostgresDSN != "" {
+		dm, err = NewSqlDatabaseInfo(PostgreSQL, c.PostgresDSN, IdentityTableName)
+	} else if c.SqliteDSN != "" {
+		dm, err = NewSqlDatabaseInfo(SQLite, c.SqliteDSN, IdentityTableName)
+	} else {
+		return fmt.Errorf("missing DSN for postgres or SQLite in configuration")
+	}
 	if err != nil {
 		return err
 	}
 
-	tx, shouldMigrate, err := checkVersion(txCtx, dbManager)
+	current, err := getCurrentVersion(dm)
 	if err != nil {
 		return err
 	}
-	if !shouldMigrate {
+
+	if current.MigrationVersion == MigrationVersion {
 		log.Infof("database migration version already up to date")
 		return nil
 	}
+	log.Infof("database migration version: %s / application migration version: %s", current.MigrationVersion, MigrationVersion)
 
-	log.Println("database migration version updated, ready to upgrade")
-	identitiesToPort, err := getAllIdentitiesFromLegacyCtx(c)
+	if current.MigrationVersion == "0.0" {
+		err = migrateFileToDB(c, dm)
+		if err != nil {
+			return err
+		}
+
+		current.MigrationVersion = MigrationVersion
+		err = updateVersion(dm, current)
+		if err != nil {
+			return err
+		}
+	}
+
+	if current.MigrationVersion != MigrationVersion {
+		return fmt.Errorf("unexpected database migration version: %s", current.MigrationVersion)
+	}
+
+	return nil
+}
+
+func migrateFileToDB(c config.Config, dm *DatabaseManager) error {
+	identitiesToPort, err := getIdentitiesFromFile(c)
 	if err != nil {
 		return err
 	}
 
-	err = migrateIdentities(c, dbManager, identitiesToPort)
+	err = storeIdentitiesInDB(c, dm, identitiesToPort)
 	if err != nil {
 		return err
 	}
 
 	log.Infof("successfully migrated file based context into database")
-	return updateVersion(tx)
+	return nil
 }
 
-func getAllIdentitiesFromLegacyCtx(c config.Config) ([]ent.Identity, error) {
+func getIdentitiesFromFile(c config.Config) ([]ent.Identity, error) {
 	log.Infof("getting existing identities from file system")
 
 	secret16Bytes, err := base64.StdEncoding.DecodeString(c.Secret16Base64)
@@ -99,7 +147,7 @@ func getAllIdentitiesFromLegacyCtx(c config.Config) ([]ent.Identity, error) {
 		return nil, err
 	}
 
-	var allIdentities []ent.Identity
+	var identities []ent.Identity
 
 	for _, uid := range uids {
 
@@ -135,13 +183,15 @@ func getAllIdentitiesFromLegacyCtx(c config.Config) ([]ent.Identity, error) {
 			}
 		}
 
-		allIdentities = append(allIdentities, i)
+		identities = append(identities, i)
 	}
 
-	return allIdentities, nil
+	log.Infof("found %d identities in file system", len(identities))
+
+	return identities, nil
 }
 
-func migrateIdentities(c config.Config, dm *DatabaseManager, identities []ent.Identity) error {
+func storeIdentitiesInDB(c config.Config, dm *DatabaseManager, identities []ent.Identity) error {
 	log.Infof("starting migration...")
 
 	p, err := NewExtendedProtocol(dm, c.SecretBytes32, nil)
@@ -152,7 +202,7 @@ func migrateIdentities(c config.Config, dm *DatabaseManager, identities []ent.Id
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	tx, err := dm.db.BeginTx(ctx, dm.options)
+	tx, err := dm.StartTransaction(ctx)
 	if err != nil {
 		return err
 	}
@@ -163,64 +213,77 @@ func migrateIdentities(c config.Config, dm *DatabaseManager, identities []ent.Id
 		err = p.StoreNewIdentity(tx, &id)
 		if err != nil {
 			if err == ErrExists {
-				log.Warnf("%s: %v -> skip", id.Uid, err)
+				log.Warnf("%s: %v", id.Uid, err)
 			} else {
 				return err
 			}
 		}
 	}
 
-	return tx.Commit()
+	return dm.CloseTransaction(tx, Commit)
 }
 
-func checkVersion(ctx context.Context, dm *DatabaseManager) (*sql.Tx, bool, error) {
-	var version Migration
-
-	tx, err := dm.db.BeginTx(ctx, dm.options)
+func getCurrentVersion(dm *DatabaseManager) (*Migration, error) {
+	err := createVersionTable(dm)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 
-	if _, err := dm.db.Exec(CreateTable(PostgresVersion, PostgreSqlVersionTableName)); err != nil {
-		return tx, false, err
+	version := &Migration{
+		Id: MigrationID,
 	}
 
-	err = tx.QueryRow("SELECT * FROM version WHERE id = 'dbMigration' FOR UPDATE").
-		Scan(&version.Id, &version.MigrationVersion)
+	var noRows bool
+
+	query := fmt.Sprintf("SELECT migration_version FROM %s WHERE id = $1", VersionTableName)
+
+	err = dm.db.QueryRow(query, version.Id).Scan(&version.MigrationVersion)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			shouldMigrate, err := CreateVersionEntry(tx, version)
-			return tx, shouldMigrate, err
+			noRows = true
+			version.MigrationVersion = "0.0"
 		} else {
-			return tx, false, err
+			return nil, err
 		}
 	}
-	log.Debugf("database migration version: %s / application migration version: %s", version.MigrationVersion, MigrationVersion)
-	if version.MigrationVersion != MigrationVersion {
-		return tx, true, nil
+
+	if noRows {
+		err = createVersionEntry(dm, version)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return tx, false, nil
+
+	return version, nil
 }
 
-func CreateVersionEntry(tx *sql.Tx, version Migration) (bool, error) {
-	version.Id = "dbMigration"
-	version.MigrationVersion = MigrationVersion
-	_, err := tx.Exec("INSERT INTO version (id, migration_version) VALUES ($1, $2);",
-		&version.Id, &version.MigrationVersion)
-	if err != nil {
-		return false, err
+func createVersionTable(dm *DatabaseManager) error {
+	switch dm.driverName {
+	case PostgreSQL:
+		return dm.CreateTable(PostgresVersion, VersionTableName)
+	case SQLite:
+		return dm.CreateTable(SQLiteVersion, VersionTableName)
+	default:
+		return fmt.Errorf("unsupported SQL driver: %s", dm.driverName)
 	}
-	return true, nil
 }
 
-func updateVersion(tx *sql.Tx) error {
-	var version Migration
-	version.Id = "dbMigration"
-	version.MigrationVersion = MigrationVersion
-	_, err := tx.Exec("UPDATE version SET migration_version = $1 WHERE id = $2;",
-		&version.MigrationVersion, &version.Id)
+func createVersionEntry(dm *DatabaseManager, v *Migration) error {
+	query := fmt.Sprintf("INSERT INTO %s (id, migration_version) VALUES ($1, $2);", VersionTableName)
+
+	_, err := dm.db.Exec(query, &v.Id, v.MigrationVersion)
 	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	return nil
+}
+
+func updateVersion(dm *DatabaseManager, v *Migration) error {
+	query := fmt.Sprintf("UPDATE %s SET migration_version = $1 WHERE id = $2;", VersionTableName)
+
+	_, err := dm.db.Exec(query, v.MigrationVersion, &v.Id)
+	if err != nil {
+		return err
+	}
+	return nil
 }

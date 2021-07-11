@@ -627,24 +627,42 @@ To switch to the `demo` backend environment
     UBIRCH_ENV=demo
     ```
 
-### Use a SQL database to store the protocol context
+### Use a postgreSQL database to store the protocol context
 
-The `DSN` (*Data Source Name*) can be used to connect the client to a SQL database for storing the protocol context
-(i.e. the encrypted keystore and last signatures) persistently. If DSN is not set or empty, the client will create a
-file `keys.json` (and `keys.json.bck`) as well as a subdirectory `/signatures` locally in the working directory.
+Instead of a local file, the client can use a postgreSQL database for storing the protocol context
+(i.e. the encrypted keystore and last signatures) persistently.
 
-If you want to use a SQL database instead of a local file, make sure to apply the
-[database schema](main/schema.sql), as the application will not create it itself on first run, and set the DSN in the
-configuration.
+In order to connect to the database, the `DSN` (*Data Source Name*) has to be set in the configuration. If no DSN is not
+set, the client will create a file `keys.json` (and `keys.json.bck`) as well as a subdirectory `/signatures` locally in
+the working directory.
+
+If you want to use a postgreSQL database,
 
 - add the following key-value pair to your `config.json`:
     ```json
-      "DSN": "<data source name for database>"
+      "postgresDSN": "<data source name for postgres database>"
     ```
 - or set the following environment variable:
     ```shell
-    UBIRCH_DSN=<data source name for database>
+    POSTGRES_DSN=<data source name for postgres database>
     ```
+
+### Use a SQLite database to store the protocol context
+
+The client also supports context management via SQLite database. The DSN in this case is the path to the SQLite db file.
+
+If you want to use a SQLite database,
+
+- add the following key-value pair to your `config.json`:
+    ```json
+      "sqliteDSN": "<file path to the .db file>"
+    ```
+- or set the following environment variable:
+    ```shell
+    UBIRCH_SQLITE_DSN=<file path to the .db file>
+    ```
+
+If no .db file exists in the path provided a new one will get created.
 
 ### Customize X.509 Certificate Signing Requests
 
